@@ -20,102 +20,11 @@
 
 
 import argparse
-import fnmatch
 import os
 import re
 import sys
 import textwrap
 from math import ceil
-
-
-def is_extensionless(path):
-    """
-    Returns True if path has no extension.
-
-    >>> is_extensionless("./www/test")
-    True
-    >>> is_extensionless("./www/.profile")
-    True
-    >>> is_extensionless("./www/.dir/README")
-    True
-    >>> is_extensionless("./scripts/menu.js")
-    False
-    >>> is_extensionless("./LICENSE")
-    True
-    """
-    _, ext = os.path.splitext(path)
-    return ext == ''
-
-
-def matches_extension(path, extension):
-    """
-    Returns True if path has the given extension, or if
-    the last path component matches the extension. Supports
-    Unix glob matching.
-
-    >>> matches_extension("./www/profile.php", "php")
-    True
-    >>> matches_extension("./scripts/menu.js", "html")
-    False
-    >>> matches_extension("./LICENSE", "LICENSE")
-    True
-    """
-    _, ext = os.path.splitext(path)
-    if ext == '':
-        # If there is no extension, grab the file name and
-        # compare it to the given extension.
-        return os.path.basename(path) == extension
-    else:
-        # If the is an extension, drop the leading period and
-        # compare it to the extension.
-        return fnmatch.fnmatch(ext[1:], extension)
-
-
-def path_filter(extensions, exclude_paths=None):
-    """
-    Returns a function that returns True if a filepath is acceptable.
-
-    @param extensions     An array of strings. Specifies what file
-                          extensions should be accepted by the
-                          filter. If None, we default to the Unix glob
-                          `*` and match every file extension.
-    @param exclude_paths  An array of strings which represents filepaths
-                          that should never be accepted by the filter.
-
-    @return function      A filter function that will only return True
-                          when a filepath is acceptable under the above
-                          conditions.
-
-    >>> map(path_filter(extensions=['js', 'php']),
-    ...     ['./profile.php', './q.jjs'])
-    [True, False]
-    >>> map(path_filter(extensions=['*'],
-    ...                 exclude_paths=['html']),
-    ...     ['./html/x.php', './lib/y.js'])
-    [False, True]
-    >>> map(path_filter(extensions=['js', 'BUILD']),
-    ...     ['./a.js', './BUILD', './profile.php'])
-    [True, True, False]
-    """
-    exclude_paths = exclude_paths or []
-
-    def the_filter(path):
-        if not any(matches_extension(path, extension)
-                   for extension in extensions):
-            return False
-        if exclude_paths:
-            for excluded in exclude_paths:
-                if path.startswith(
-                    excluded
-                ) or path.startswith('./' + excluded):
-                    return False
-        return True
-    return the_filter
-
-_default_path_filter = path_filter(
-    extensions=['php', 'phpt', 'js', 'css', 'rb', 'erb']
-)
-
 
 def run_interactive(query, editor=None, just_count=False, default_no=False):
     """
@@ -132,13 +41,6 @@ def run_interactive(query, editor=None, just_count=False, default_no=False):
 
     global yes_to_all  # noqa
 
-    # Load start from bookmark, if appropriate.
-    bookmark = _load_bookmark()
-    if bookmark:
-        print 'Resume where you left off, at %s (y/n)? ' % str(bookmark),
-        if (_prompt(default='y') == 'y'):
-            query.start_position = bookmark
-
     # Okay, enough of this foolishness of computing start and end.
     # Let's ask the user about some one line diffs!
     print 'Searching for first instance...'
@@ -153,18 +55,8 @@ def run_interactive(query, editor=None, just_count=False, default_no=False):
         return
 
     for patch in suggestions:
-        _save_bookmark(patch.start_position)
         _ask_about_patch(patch, editor, default_no)
         print 'Searching...'
-    _delete_bookmark()
-    if yes_to_all:
-        terminal_clear()
-        print (
-            "You MUST indicate in your code review:"
-            " \"codemod with 'Yes to all'\"."
-            "Make sure you and other people review the changes.\n\n"
-            "With great power, comes great responsibility."
-        )
 
 
 def line_transformation_suggestor(line_transformation, line_filter=None):
@@ -206,11 +98,9 @@ def regex_suggestor(regex, substitution=None, ignore_case=False,
             regex = re.compile(regex, re.IGNORECASE)
 
     if substitution is None:
-        def line_transformation(line):
-            return None if regex.search(line) else line
+        line_transformation = lambda line: None if regex.search(line) else line
     else:
-        def line_transformation(line):
-            return regex.sub(substitution, line)
+        line_transformation = lambda line: regex.sub(substitution, line)
     return line_transformation_suggestor(line_transformation, line_filter)
 
 
@@ -233,8 +123,7 @@ def multiline_regex_suggestor(regex, substitution=None, ignore_case=False):
             regex = re.compile(regex, re.DOTALL | re.IGNORECASE)
 
     if isinstance(substitution, str):
-        def substitution_func(match):
-            return match.expand(substitution)
+        substitution_func = lambda match: match.expand(substitution)
     else:
         substitution_func = substitution
 
@@ -295,129 +184,28 @@ class Query(object):
     Represents a suggestor, along with a set of constraints on which files
     should be fed to that suggestor.
 
-    >>> Query(lambda x: None, start='profile.php:20').start_position
-    Position('profile.php', 20)
     """
 
-    def __init__(self,
-                 suggestor,
-                 start=None,
-                 end=None,
-                 root_directory='.',
-                 path_filter=_default_path_filter,
-                 inc_extensionless=False):
+    def __init__(self, suggestor, path):
+
         """
         @param suggestor            A function that takes a list of lines and
                                     generates instances of Patch to suggest.
                                     (Patches should not specify paths.)
-        @param start                One of:
-                                    - an instance of Position
-                                    (indicating the place in the file
-                                     hierarchy at which to resume),
-                                    - a path:line_number-formatted string
-                                      representing a position,
-                                    - a string formatted like "25%"
-                                    (indicating we should start 25% of
-                                     the way through the process), or
-                                    - None (indicating that we should
-                                            start at the beginning).
-        @param end                  An indicator of the position
-                                    just *before* which
-                                    to stop exploring, using one
-                                    of the same formats
-                                    used for start (where None  means
-                                    'traverse to the end of the hierarchy).
-        @param root_directory       The path whose ancestor files
-                                    are to be explored.
-        @param path_filter          Given a path, returns True or False.
-                                    If False,
-                                    the entire file is ignored.
-        @param inc_extensionless    If True, will include all files without an
-                                    extension when checking
-                                    against the path_filter
+
         """
         self.suggestor = suggestor
-        self._start = start
-        self._end = end
-        self.root_directory = root_directory
-        self.path_filter = path_filter
-        self.inc_extensionless = inc_extensionless
-        self._all_patches_cache = None
-
-    def clone(self):
-        import copy
-        return copy.copy(self)
-
-    def _get_position(self, attr_name):
-        attr_value = getattr(self, attr_name)
-        if attr_value is None:
-            return None
-        if isinstance(attr_value, str) and attr_value.endswith('%'):
-            attr_value = self.compute_percentile(int(attr_value[:-1]))
-            setattr(self, attr_name, attr_value)
-        return Position(attr_value)
-
-    def get_start_position(self):
-        return self._get_position('_start')
-    start_position = property(get_start_position)
-
-    def get_end_position(self):
-        return self._get_position('_end')
-    end_position = property(get_end_position)
-
-    def get_all_patches(self, dont_use_cache=False):
-        """
-        Computes a list of all patches matching this query, though ignoreing
-        self.start_position and self.end_position.
-
-        @param dont_use_cache   If False, and get_all_patches has been called
-                                before, compute the list computed last time.
-        """
-        if not dont_use_cache and self._all_patches_cache is not None:
-            return self._all_patches_cache
-
-        print (
-            'Computing full change list (since you specified a percentage)...'
-        ),
-        sys.stdout.flush()  # since print statement ends in comma
-
-        endless_query = self.clone()
-        endless_query.start_position = endless_query.end_position = None
-        self._all_patches_cache = list(endless_query.generate_patches())
-        return self._all_patches_cache
-
-    def compute_percentile(self, percentage):
-        """
-        Returns a Position object that represents percentage%-far-of-the-way
-        through the larger task, as specified by this query.
-
-        @param percentage    a number between 0 and 100.
-        """
-        all_patches = self.get_all_patches()
-        return all_patches[
-            int(len(all_patches) * percentage / 100)
-        ].start_position
+        self.path = path
 
     def generate_patches(self):
         """
-        Generates a list of patches for each file underneath
-        self.root_directory
+        Generates a list of patches for file
         that satisfy the given conditions given
         query conditions, where patches for
         each file are suggested by self.suggestor.
         """
-        start_pos = self.start_position or Position(None, None)
-        end_pos = self.end_position or Position(None, None)
 
-        path_list = Query._walk_directory(self.root_directory)
-        path_list = Query._sublist(path_list, start_pos.path, end_pos.path)
-        path_list = (
-            path for path in path_list if
-            Query._path_looks_like_code(path) and
-            (self.path_filter(path)) or
-            (self.inc_extensionless and is_extensionless(path))
-        )
-        for path in path_list:
+        for path in [self.path]:
             try:
                 lines = list(open(path))
             except IOError:
@@ -426,13 +214,6 @@ class Query(object):
                 continue
 
             for patch in self.suggestor(lines):
-                if path == start_pos.path:
-                    if patch.start_line_number < start_pos.line_number:
-                        continue  # suggestion is pre-start_pos
-                if path == end_pos.path:
-                    if patch.end_line_number >= end_pos.line_number:
-                        break  # suggestion is post-end_pos
-
                 old_lines = lines[
                     patch.start_line_number:patch.end_line_number]
                 if patch.new_lines is None or patch.new_lines != old_lines:
@@ -444,99 +225,7 @@ class Query(object):
     def run_interactive(self, **kargs):
         run_interactive(self, **kargs)
 
-    @staticmethod
-    def _walk_directory(root_directory):
-        """
-        Generates the paths of all files that are ancestors
-        of `root_directory`.
-        """
 
-        paths = [os.path.join(root, name)
-                 for root, dirs, files in os.walk(root_directory)  # noqa
-                 for name in files]
-        paths.sort()
-        return paths
-
-    @staticmethod
-    def _sublist(items, starting_value, ending_value=None):
-        """
-        >>> list(Query._sublist((x*x for x in xrange(1, 100)), 16, 64))
-        [16, 25, 36, 49, 64]
-        """
-        have_started = starting_value is None
-
-        for x in items:
-            have_started = have_started or x == starting_value
-            if have_started:
-                yield x
-
-            if ending_value is not None and x == ending_value:
-                break
-
-    @staticmethod
-    def _path_looks_like_code(path):
-        """
-        >>> Query._path_looks_like_code('/home/jrosenstein/www/profile.php')
-        True
-        >>> Query._path_looks_like_code('./tags')
-        False
-        >>> Query._path_looks_like_code('/home/jrosenstein/www/profile.php~')
-        False
-        >>> Query._path_looks_like_code('/home/jrosenstein/www/.git/HEAD')
-        False
-        """
-        return (
-            '/.' not in path and
-            path[-1] != '~' and
-            not path.endswith('tags') and
-            not path.endswith('TAGS')
-        )
-
-
-class Position(object):
-    """
-    >>> p1, p2 = Position('./hi.php', 20), Position('./hi.php:20')
-    >>> p1.path == p2.path and p1.line_number == p2.line_number
-    True
-    >>> p1
-    Position('./hi.php', 20)
-    >>> print p1
-    ./hi.php:20
-    >>> Position(p1)
-    Position('./hi.php', 20)
-    """
-
-    def __init__(self, *path_and_line_number):
-        """
-        You can use the two parameter version, and pass a
-        path and line number, or
-        you can use the one parameter version, and
-        pass a $path:$line_number string,
-        or another instance of Position to copy.
-        """
-        if len(path_and_line_number) == 2:
-            self.path, self.line_number = path_and_line_number
-        elif len(path_and_line_number) == 1:
-            arg = path_and_line_number[0]
-            if isinstance(arg, Position):
-                self.path, self.line_number = arg.path, arg.line_number
-            else:
-                try:
-                    self.path, line_number_s = arg.split(':')
-                    self.line_number = int(line_number_s)
-                except ValueError:
-                    raise ValueError(
-                        'inappropriately formatted Position string: %s'
-                        % path_and_line_number[0]
-                    )
-        else:
-            raise TypeError('Position takes 1 or 2 arguments')
-
-    def __repr__(self):
-        return 'Position(%s, %d)' % (repr(self.path), self.line_number)
-
-    def __str__(self):
-        return '%s:%d' % (self.path, self.line_number)
 
 
 class Patch(object):
@@ -547,8 +236,6 @@ class Patch(object):
     >>> p = Patch(2, 4, ['X', 'Y', 'Z'], 'x.php')
     >>> print p.render_range()
     x.php:2-3
-    >>> p.start_position
-    Position('x.php', 2)
     >>> l = ['a', 'b', 'c', 'd', 'e', 'f']
     >>> p.apply_to(l)
     >>> l
@@ -610,10 +297,6 @@ class Patch(object):
                 path,
                 self.start_line_number, self.end_line_number - 1
             )
-
-    def get_start_position(self):
-        return Position(self.path, self.start_line_number)
-    start_position = property(get_start_position)
 
 
 def print_patch(patch, lines_to_print, file_lines=None):
@@ -716,35 +399,6 @@ def _save(path, lines):
 def run_editor(position, editor=None):
     editor = editor or os.environ.get('EDITOR') or 'vim'
     os.system('%s +%d %s' % (editor, position.line_number + 1, position.path))
-
-
-#
-# Bookmarking functions.  codemod saves a file called .codemod.bookmark to
-# keep track of where you were the last time you exited in the middle of
-# an interactive sesh.
-#
-
-def _save_bookmark(position):
-    file_w = open('.codemod.bookmark', 'w')
-    file_w.write(str(position))
-    file_w.close()
-
-
-def _load_bookmark():
-    try:
-        bookmark_file = open('.codemod.bookmark')
-    except IOError:
-        return None
-    contents = bookmark_file.readline().strip()
-    bookmark_file.close()
-    return Position(contents)
-
-
-def _delete_bookmark():
-    try:
-        os.remove('.codemod.bookmark')
-    except OSError:
-        pass  # file didn't exist
 
 
 #
@@ -874,7 +528,7 @@ def _parse_command_line():
             of the <font> tag.  From the
             command line, you might make progress by running:
 
-              codemod.py -m -d /home/jrosenstein/www --extensions php,html \
+            grep -l '<font>' | xargs -o -IARG codemod -m --path ARG \
                          '<font *color="?(.*?)"?>(.*?)</font>' \
                          '<span style="color: \1;">\2</span>'
 
@@ -896,7 +550,6 @@ def _parse_command_line():
               codemod.Query(...).run_interactive()
 
             See the documentation for the Query class for details.
-
             @author Justin Rosenstein
             """)
     )
@@ -906,38 +559,10 @@ def _parse_command_line():
                              '(e.g. have dot match newlines). '
                              'By default, codemod applies the regex one '
                              'line at a time.')
-    parser.add_argument('-d', action='store', type=str, default='.',
-                        help='The path whose descendent files '
-                             'are to be explored. '
-                             'Defaults to current dir.')
     parser.add_argument('-i', action='store_true',
                         help='Perform case-insensitive search.')
 
-    parser.add_argument('--start', action='store', type=str,
-                        help='A path:line_number-formatted position somewhere'
-                             ' in the hierarchy from which to being exploring,'
-                             'or a percentage (e.g. "--start 25%%") of '
-                             'the way through to start.'
-                             'Useful if you\'re divvying up the '
-                             'substitution task across multiple people.')
-    parser.add_argument('--end', action='store', type=str,
-                        help='A path:line_number-formatted position '
-                             'somewhere in the hierarchy just *before* '
-                             'which we should stop exploring, '
-                             'or a percentage of the way through, '
-                             'just before which to end.')
-
-    parser.add_argument('--extensions', action='store',
-                        default='*', type=str,
-                        help='A comma-delimited list of file extensions '
-                             'to process. Also supports Unix pattern '
-                             'matching.')
-    parser.add_argument('--include-extensionless', action='store_true',
-                        help='If set, this will check files without '
-                        'an extension, along with any matching file '
-                        'extensions passed in --extensions')
-    parser.add_argument('--exclude-paths', action='store', type=str,
-                        help='A comma-delimited list of paths to exclude.')
+    parser.add_argument('--path', action='store', type=str, required=True)
 
     parser.add_argument('--accept-all', action='store_true',
                         help='Automatically accept all '
@@ -955,12 +580,25 @@ def _parse_command_line():
                         help='Don\'t run normally.  Instead, just print '
                              'out number of times places in the codebase '
                              'where the \'query\' matches.')
+    parser.add_argument('--test', action='store_true',
+                        help='Don\'t run normally.  Instead, just run '
+                             'the unit tests embedded in the codemod library.')
+
     parser.add_argument('match', nargs='?', action='store', type=str,
                         help='Regular expression to match.')
     parser.add_argument('subst', nargs='?', action='store', type=str,
                         help='Substitution to replace with.')
 
     arguments = parser.parse_args()
+
+    if arguments.test:
+        import doctest
+        doctest.testmod()
+        sys.exit(0)
+
+    if arguments.path is None:
+        parser.print_usage()
+        sys.exit(0)
 
     yes_to_all = arguments.accept_all
 
@@ -969,18 +607,7 @@ def _parse_command_line():
     query_options['suggestor'] = (
         multiline_regex_suggestor if arguments.m else regex_suggestor
     )(arguments.match, arguments.subst, arguments.i)
-
-    query_options['start'] = arguments.start
-    query_options['end'] = arguments.end
-    query_options['root_directory'] = arguments.d
-    query_options['inc_extensionless'] = arguments.include_extensionless
-
-    if arguments.exclude_paths is not None:
-        exclude_paths = arguments.exclude_paths.split(',')
-    else:
-        exclude_paths = None
-    query_options['path_filter'] = path_filter(arguments.extensions.split(','),
-                                               exclude_paths)
+    query_options['path'] = arguments.path
 
     options = {}
     options['query'] = Query(**query_options)
