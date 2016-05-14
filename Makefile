@@ -1,13 +1,13 @@
 .PHONY: test install pep8 release clean
 
 test: pep8
-	py.test --doctest-modules codemod
+	py.test --doctest-modules modone
 
 install:
 	python setup.py develop
 
 pep8:
-	@flake8 codemod --ignore=F403
+	@flake8 modone --ignore=F403
 
 release: test
 	@python setup.py sdist upload

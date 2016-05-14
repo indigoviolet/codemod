@@ -16,7 +16,6 @@
 #
 # See accompanying file LICENSE.
 #
-# @author Justin Rosenstein
 
 
 import argparse
@@ -518,51 +517,45 @@ def _parse_command_line():
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=textwrap.dedent(r"""
-            codemod.py is a tool/library to assist you with large-scale
-            codebase refactors
-            that can be partially automated but still require
-            human oversight and
-            occassional intervention.
+
+            modone is a tool/library to assist you with large-scale codebase
+            refactors that can be partially automated but still require human
+            oversight and occassional intervention.
 
             Example: Let's say you're deprecating your use
             of the <font> tag.  From the
             command line, you might make progress by running:
 
-            grep -l '<font>' | xargs -o -IARG codemod -m --path ARG \
+            grep -l '<font>' | xargs -o -IARG modone -m --path ARG \
                          '<font *color="?(.*?)"?>(.*?)</font>' \
                          '<span style="color: \1;">\2</span>'
 
-            For each match of the regex, you'll be shown a colored diff,
-            and asked if you
-            want to accept the change (the replacement of
-                                       the <font> tag with a <span>
-            tag), reject it, or edit the line in question
-            in your $EDITOR of choice.
-            """),
+            For each match of the regex, you'll be shown a colored diff, and
+            asked if you want to accept the change (the replacement of the
+            <font> tag with a <span> tag), reject it, or edit the line in
+            question in your $EDITOR of choice.
+        """),
         epilog=textwrap.dedent(r"""
-            You can also use codemod for transformations that are much
-            more sophisticated
-            than regular expression substitution.  Rather than using
-            the command line, you
-            write Python code that looks like:
+        You can also use modone for transformations that are much more
+        sophisticated than regular expression substitution.  Rather than
+        using the command line, you write Python code that looks like:
 
-              import codemod
-              codemod.Query(...).run_interactive()
+              import modone
+              modone.Query(...).run_interactive()
 
             See the documentation for the Query class for details.
-            @author Justin Rosenstein
             """)
     )
 
     parser.add_argument('-m', action='store_true',
                         help='Have regex work over multiple lines '
                              '(e.g. have dot match newlines). '
-                             'By default, codemod applies the regex one '
+                             'By default, modone applies the regex one '
                              'line at a time.')
     parser.add_argument('-i', action='store_true',
                         help='Perform case-insensitive search.')
 
-    parser.add_argument('--path', action='store', type=str, required=True)
+    parser.add_argument('--path', action='store', type=str)
 
     parser.add_argument('--accept-all', action='store_true',
                         help='Automatically accept all '
@@ -582,7 +575,7 @@ def _parse_command_line():
                              'where the \'query\' matches.')
     parser.add_argument('--test', action='store_true',
                         help='Don\'t run normally.  Instead, just run '
-                             'the unit tests embedded in the codemod library.')
+                             'the unit tests embedded in the modone library.')
 
     parser.add_argument('match', nargs='?', action='store', type=str,
                         help='Regular expression to match.')
@@ -593,7 +586,7 @@ def _parse_command_line():
 
     if arguments.test:
         import doctest
-        doctest.testmod()
+        doctest.testmod(verbose=True)
         sys.exit(0)
 
     if arguments.path is None:

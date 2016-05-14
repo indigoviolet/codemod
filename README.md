@@ -26,20 +26,25 @@ some reason.
 Here's how we might then fix them:
 
 ```
-grep -E -l '\$(\.|\()' -R . | xargs grep -L 'jquery' | xargs -o -IARG codemod -m --path ARG --default-no '^(var.*?require.*?)\n'  '\1\nvar $ = require("jquery");\n'
+grep -E -l '\$(\.|\()' -R . | xargs grep -L 'jquery' | xargs -o -IARG modone -m --path ARG --default-no '^(var.*?require.*?)\n'  '\1\nvar $ = require("jquery");\n'
 
 ```
 
+Note
+----
 
-Install
--------
+In many ways I've just removed functionality from codemod; the one thing I've
+added (as of May 2016) is the ability to accept and operate on a single
+`--path`. This is a powerful change because it opens the doors to using other
+tools to expand codemod's behavior.
 
+I initially went the route of adding more options to codemod, like a
+`--path_regexp`, `--exclude-contents-regexp` etc and realized that this was
+unnecessary.
 
-Usage
------
-
-The last two arguments are a regular expression to match and a substitution string, respectively.  Or you can omit the substitution string, and just be prompted on each match for whether you want to edit in your editor.
-
+I've released this stripped-down code as a separate library because I imagine
+that the codemod folks don't want to force their users to go this route or
+break their scripts.
 
 Dependencies
 ------------
@@ -48,5 +53,7 @@ Dependencies
 
 Credits
 -------
+
+[Facebook's codemod library](https://github.com/facebook/codemod),
 
 Licensed under the Apache License, Version 2.0.

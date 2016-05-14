@@ -4,19 +4,16 @@ except ImportError:
     from distutils.core import setup, find_packages
 
 description = (
-    'Codemod is a tool/library to assist you with large-scale codebase '
-    'refactors that can be partially automated but still require human '
-    'oversight and occasional intervention. Codemod was developed at '
-    'Facebook and released as open source.'
+    'modone is codemod, one file at a time'
 )
 
 setup(
-    name='codemod',
-    version="0.2.1",
-    url='http://github.com/facebook/codemod',
+    name='modone',
+    version="1.0.0",
+    url='http://github.com/indigoviolet/modone',
     license='Apache License 2.0',
-    author="Facebook",
-    author_email="facebook@facebook.com",
+    author="Venky Iyer",
+    author_email="indigoviolet@gmail.com",
     description=description,
     long_description=description,
     packages=find_packages(),
@@ -25,7 +22,7 @@ setup(
     platforms='any',
     entry_points='''
         [console_scripts]
-        codemod=codemod.base:main
+        modone=modone.base:main
     ''',
     tests_require=['flake8', 'pytest'],
     test_suite='py.test'
